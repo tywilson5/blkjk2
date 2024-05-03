@@ -7,7 +7,7 @@
 
 welcome db "Welcome to Blackjack! Input starting amount (10-1000): $", 10, 13, 0
 init_amount db 10 dup (0)        ;buffer for initial amount
-
+comp_bet dw 0                    ;computer bet buffer
 decks db "Select number of card decks (1-3): ", 10, 13, 0
 decks_amount db 2 dup (0)       ; buffer for number of decks
 
@@ -41,6 +41,12 @@ surrender_play db "Surrender $", 0
 continue_play db "Do you want to continue the game?: $", 0
 end_play db "Thank you for playing Blackjack!", 0
 
+
+blackjack_win db "You win!", 0
+bust db "You bust! Computer wins.", 0
+dealer_bust db "Computer busts! You win.", 0
+dealer_win db "Computer wins!", 0
+player_win db "You win the turn!", 0
 ;Error Messages
 
 invalid_input db "Invalid input. Please try again.", 0
@@ -68,8 +74,8 @@ start:
     call deck
 
     call difficulty
-
-    ;add later
+    call turn
+    
 
     mov ah, 4ch
     int 21h
@@ -91,16 +97,15 @@ config_amount:
 
 read_input_amount:
     mov ah, 01h                     ;read character from input
-    int 21h                         
+    int 21h  
     cmp al, 0Dh                     ;check for Enter
     je done_init_input              ;if Enter, exit loop
-    mov [si], al                    
-    inc si                          
+    mov [si], al
+    inc si
     jmp read_input_amount
 
 done_init_input:
     mov byte ptr [si], '$'          ;terminate string
-    ;(Validation to be added here)
 
     ret
 amount endp
@@ -123,16 +128,15 @@ config_deck:
 
 read_decks_amount:
     mov ah, 01h                     ;read character from input
-    int 21h                         
-    cmp al, 0Dh                     
+    int 21h
+    cmp al, 0Dh
     je done_decks_input            ;if Enter, exit loop
-    mov [si], al                    
-    inc si                           
-    jmp read_decks_amount             
+    mov [si], al
+    inc si  
+    jmp read_decks_amount
 
 done_decks_input:
     mov byte ptr [si], '$'          ;terminate string
-    ; ... (validation here)
 
     ret
 deck endp 
@@ -192,8 +196,6 @@ config_diff:
     mov dx, offset newline
     int 21h
 
-   ;this part has me confused, need to fix 
-
 
 read_diff:
     mov ah, 01h                     ;read char
@@ -208,7 +210,7 @@ comp_diff:
     je selection_med
     cmp al, 'h'
     je selection_hard
-    jmp invalid                    
+    jmp invalid
 
 selection_easy:
     mov ah, 09h
@@ -274,7 +276,8 @@ user_bet:
 compare:   
     mov ah, 01h
     int 21h
-    cmp al, 0Dh
+    cmp al, 0Dh ;check for Enter
+    je game_options
     mov [si], al
     inc si
     loop compare
@@ -290,7 +293,7 @@ game_options:                ;displays prompt
     int 21h
     mov dx, offset surrender_msg 
     int 21h 
-    cmp al, '1'                     
+    cmp al, '1'
     je hit  
     cmp al, '2'
     je stand 
@@ -310,9 +313,9 @@ hit_deal:
     add ax, 18
     inc si
     cmp si, 22
-    jl hit_deal          
+    jl hit_deal
     int 21h
-    mov dx, [di]                      ;prints the value of the variable in di
+    mov dx, [di]
     int 21h
     mov dx, offset newline
     jmp continue_game
@@ -333,8 +336,91 @@ surrender:
     int 21h
     jmp continue_game
 
+
+done_bet_input:
+    mov byte ptr [si - 1], '$' ;decrement
+
+    mov di, si                 ;now point to starting bet amount
+
+display_computer_bet:
+    ;print computer bet message
+    lea dx, card_values
+    mov ah, 09h
+    int 21h
+
+display_cards:
+    mov ax, offset card_values
+    mov si, 0
+
+deal_card:
+    mov cx, 52
+
+deal_card_loop:
+    mov [di], ax
+    add ax, 18
+    inc di
+    loop deal_card_loop
+
+    ;print the dealt card
+    mov ah, 09h
+    mov dx, [di - 18]
+    int 21h
+    mov dx, offset newline
+    int 21h
+
+    ret
+
+
+WIN_VALUE equ 1
+LOSS_VALUE equ -1
+
+;handle win/loss messages
+update_wins_and_print_msg proc
+    
+
+    ;update player wins
+    add word ptr player_wins, ax 
+
+    add dx, offset newline
+    mov ah, 09h
+    int 21h
+    ret
+
+update_wins_and_print_msg endp
+
+player_wins_game:
+    mov ax, WIN_VALUE
+    mov dx, offset blackjack_win
+    call update_wins_and_print_msg
+    jmp continue_game
+
+player_busts:
+    mov ax, LOSS_VALUE
+    mov dx, offset bust
+    call update_wins_and_print_msg
+    jmp continue_game
+
+dealer_busts:
+    mov ax, WIN_VALUE
+    mov dx, offset dealer_bust
+    call update_wins_and_print_msg
+    jmp continue_game
+
+player_turn_wins:
+    mov ax, WIN_VALUE
+    mov dx, offset player_win
+    call update_wins_and_print_msg
+    jmp continue_game
+
+dealer_wins:
+    mov ax, LOSS_VALUE
+    mov dx, offset dealer_win
+    call update_wins_and_print_msg
+    jmp continue_game
+
 turn endp
 
+;Continue Game Logic
 continue_game proc 
     
 continue_loop: ;takes care of continue game logic
@@ -351,11 +437,62 @@ continue_loop: ;takes care of continue game logic
      
 
 continue_yes:
-    ; ('y' input logic to be added here)
     jmp continue_loop
 
 continue_no:
-    ; ('n' input logic to be added here)
     jmp exit
+
+
+turnjump:
+        jmp far ptr user_bet
+
+    user_end_game:
+        ;print new line and end game message
+        lea dx, end_play
+        mov ah, 09h
+        int 21h
+
+        
 continue_game endp
+
+;Computer Bet Logic
+computer_bet proc
+
+    mov al, [diff]
+    cmp al, 'h'
+    ja invalid_diff
+    
+
+    invalid_diff:
+        jmp easy_bet         ;default to easy
+
+    easy_bet:
+        ;calculate 20% under-bet using shift and add
+        mov ax, word ptr [init_amount]
+        mov bx, ax
+        shr bx, 2
+        sub ax, bx
+        mov [comp_bet], ax
+        ret
+
+    medium_bet:
+        ;copy player bet
+         mov ax, word ptr [init_amount]
+        mov [comp_bet], ax
+        ret
+
+    hard_bet:
+        ;calculate 30% over-bet using shift and add
+        mov ax, word ptr [init_amount]
+        mov bx, ax          ;copy player bet
+        shr bx, 1
+        shr bx, 1
+        add ax, bx
+        mov [comp_bet], ax
+        ret
+
+    diff_table dw easy_bet, medium_bet, hard_bet
+
+computer_bet endp
+
 end start
